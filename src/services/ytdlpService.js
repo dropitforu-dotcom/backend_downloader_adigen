@@ -7,7 +7,8 @@ const YTDLP_PATH = process.env.YTDLP_PATH || 'yt-dlp';
 
 exports.fetchMetadata = (url) => {
   return new Promise((resolve, reject) => {
-    const ytDlp = spawn(YTDLP_PATH, ['-j', url]);
+    // Use python3 -m yt_dlp to avoid PATH issues when installed via pip
+    const ytDlp = spawn('python3', ['-m', 'yt_dlp', '-j', url]);
     
     let output = '';
     let errorOutput = '';
@@ -74,7 +75,7 @@ exports.downloadFile = (url, formatId, type) => {
         args.push('--merge-output-format', 'mp4');
     }
 
-    const ytDlp = spawn(YTDLP_PATH, args);
+    const ytDlp = spawn('python3', ['-m', 'yt_dlp', ...args]);
 
     let errorOutput = '';
 
