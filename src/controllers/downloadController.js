@@ -5,58 +5,71 @@ const fs = require('fs');
 exports.getMetadata = async (req, res) => {
   try {
     const { url } = req.body;
-    if (!url) return res.status(400).json({ error: 'URL is required' });
+    console.log(`[API /info] Received request for URL: ${url}`);
+    
+    if (!url) {
+      return res.status(400).json({ success: false, error: 'URL is required' });
+    }
     
     const metadata = await ytdlpService.fetchMetadata(url);
     res.json({ success: true, data: metadata });
   } catch (error) {
-    console.error('Metadata error:', error);
-    res.status(500).json({ error: 'Failed to fetch metadata', details: error.message });
+    console.error(`[API /info] Error:`, error.message);
+    console.error(`[API /info] Stack:`, error.stack);
+    if (!res.headersSent) {
+      res.status(500).json({ success: false, error: error.message || 'Failed to fetch metadata' });
+    }
   }
 };
 
 exports.downloadMedia = async (req, res) => {
   try {
     const { url, formatId, type } = req.body;
-    if (!url) return res.status(400).json({ error: 'URL is required' });
-
-    // Download file
-    const filePath = await ytdlpService.downloadFile(url, formatId, type);
+    console.log(`[API /download] Received request - URL: ${url}, Format: ${formatId}, Type: ${type}`);
     
-    // Return direct URL
+    if (!url) {
+      return res.status(400).json({ success: false, error: 'URL is required' });
+    }
+
+    const filePath = await ytdlpService.downloadFile(url, formatId, type);
     const filename = path.basename(filePath);
+    
     const protocol = req.headers['x-forwarded-proto'] || req.protocol;
     const host = req.get('host');
     const downloadUrl = `${protocol}://${host}/downloads/${filename}`;
 
     res.json({ success: true, data: { download_url: downloadUrl, filename } });
-
   } catch (error) {
-    console.error('Download error:', error);
+    console.error(`[API /download] Error:`, error.message);
+    console.error(`[API /download] Stack:`, error.stack);
     if (!res.headersSent) {
-      res.status(500).json({ error: 'Failed to download media', details: error.message });
+      res.status(500).json({ success: false, error: error.message || 'Failed to download media' });
     }
   }
 };
 
 exports.convertMedia = async (req, res) => {
-    // Similar to download, but specifically handles MP3 conversion with ffmpeg
-    try {
-        const { url } = req.body;
-        if (!url) return res.status(400).json({ error: 'URL is required' });
+  try {
+    const { url } = req.body;
+    console.log(`[API /audio] Received request for URL: ${url}`);
     
-        const filePath = await ytdlpService.downloadFile(url, 'bestaudio', 'audio');
-        // Return direct URL
-        const filename = path.basename(filePath);
-        const protocol = req.headers['x-forwarded-proto'] || req.protocol;
-        const host = req.get('host');
-        const downloadUrl = `${protocol}://${host}/downloads/${filename}`;
+    if (!url) {
+      return res.status(400).json({ success: false, error: 'URL is required' });
+    }
 
-        res.json({ success: true, data: { download_url: downloadUrl, filename } });
-      } catch (error) {
-        console.error('Conversion error:', error);
-        if (!res.headersSent) {
-          res.status(500).json({ error: 'Failed to convert media', details: error.message });
-        }
-      }
+    const filePath = await ytdlpService.downloadFile(url, 'bestaudio', 'audio');
+    const filename = path.basename(filePath);
+    
+    const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+    const host = req.get('host');
+    const downloadUrl = `${protocol}://${host}/downloads/${filename}`;
+
+    res.json({ success: true, data: { download_url: downloadUrl, filename } });
+  } catch (error) {
+    console.error(`[API /audio] Error:`, error.message);
+    console.error(`[API /audio] Stack:`, error.stack);
+    if (!res.headersSent) {
+      res.status(500).json({ success: false, error: error.message || 'Failed to convert media' });
+    }
+  }
 };
