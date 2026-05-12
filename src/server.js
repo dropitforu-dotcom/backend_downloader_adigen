@@ -8,6 +8,14 @@ const envFile = process.env.NODE_ENV === 'production' ? '.env.production' : '.en
 dotenv.config({ path: path.resolve(process.cwd(), envFile) });
 dotenv.config();
 
+process.on('uncaughtException', (err) => {
+  console.error('[server] Uncaught Exception:', err.message);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[server] Unhandled Rejection:', reason);
+});
+
 const app = express();
 const cors = require('cors');
 

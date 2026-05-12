@@ -3,49 +3,28 @@ const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const fs = require('fs');
 
-// ─── DETECT yt-dlp BINARY (Render puts it in /opt/render/.local/bin/) ──
-const YTDLP_PATHS = [
-  '/opt/render/.local/bin/yt-dlp',       // Render pip --user install
-  path.join(process.cwd(), 'yt-dlp'),    // Local binary in project root
-  '/usr/local/bin/yt-dlp',               // Global install
-  '/usr/bin/yt-dlp',                     // System install
-];
 
-let YTDLP_BIN = 'yt-dlp'; // fallback to PATH
-for (const p of YTDLP_PATHS) {
-  if (fs.existsSync(p)) {
-    YTDLP_BIN = p;
-    break;
-  }
-}
+// ─── Resolve yt-dlp binary ──────────────────────────────────────
+const YTDLP_BIN = fs.existsSync('/opt/render/.local/bin/yt-dlp')
+  ? '/opt/render/.local/bin/yt-dlp'
+  : 'yt-dlp';
 console.log('[yt-dlp] Binary:', YTDLP_BIN);
 
-// ─── DETECT ffmpeg ──────────────────────────────────────────────
-const FFMPEG_PATHS = [
-  path.join(process.cwd(), 'ffmpeg'),
-  '/usr/bin/ffmpeg',
-  '/usr/local/bin/ffmpeg',
-];
-
-let FFMPEG_BIN = 'ffmpeg';
-for (const p of FFMPEG_PATHS) {
-  if (fs.existsSync(p)) {
-    FFMPEG_BIN = p;
-    break;
-  }
+// ─── Resolve ffmpeg binary ──────────────────────────────────────
+function getFfmpegBin() {
+  const local = path.join(process.cwd(), 'ffmpeg');
+  if (fs.existsSync(local)) return local;
+  try {
+    const s = require('ffmpeg-static');
+    if (s) return s;
+  } catch (e) {}
+  return 'ffmpeg';
 }
-try {
-  const s = require('ffmpeg-static');
-  if (s && fs.existsSync(s)) FFMPEG_BIN = s;
-} catch (e) {}
-console.log('[yt-dlp] ffmpeg:', FFMPEG_BIN);
 
-// ─── COOKIES ────────────────────────────────────────────────────
-const cookiesPath = path.join(process.cwd(), 'cookies.txt');
-console.log('[yt-dlp] Cookies Path:', cookiesPath);
-console.log('[yt-dlp] Cookies Exists:', fs.existsSync(cookiesPath));
+const FFMPEG = getFfmpegBin();
+console.log('[yt-dlp] ffmpeg:', FFMPEG);
 
-// ─── URL validation ─────────────────────────────────────────────
+// ─── Validate URL (prevent command injection) ───────────────────
 function isValidUrl(url) {
   try {
     const u = new URL(url);
@@ -55,7 +34,7 @@ function isValidUrl(url) {
   }
 }
 
-// ─── Safe yt-dlp execution via execFile ─────────────────────────
+// ─── Run yt-dlp safely via execFile (NO shell, NO injection) ────
 function runYtdlp(args, timeout = 120000) {
   return new Promise((resolve, reject) => {
     console.log('[yt-dlp] CMD:', YTDLP_BIN, args.join(' '));
@@ -65,39 +44,44 @@ function runYtdlp(args, timeout = 120000) {
       timeout: timeout,
       cwd: process.cwd()
     }, (error, stdout, stderr) => {
-      if (stderr) console.log('[yt-dlp] stderr:', stderr.substring(0, 500));
-      if (stdout) console.log('[yt-dlp] stdout length:', stdout.length);
+      console.log('[yt-dlp] stdout len:', stdout ? stdout.length : 0);
+      console.log('[yt-dlp] stderr:', stderr ? stderr.substring(0, 500) : 'none');
       if (error) {
         console.error('[yt-dlp] Error:', error.message);
-        const err = new Error(stderr || error.message);
-        err.stderr = stderr;
-        err.stdout = stdout;
-        return reject(err);
+        return reject({ message: error.message, stderr, stdout });
       }
       resolve(stdout);
     });
   });
 }
 
-// ─── Startup check ──────────────────────────────────────────────
+// ─── Startup version check ──────────────────────────────────────
 (async () => {
   try {
     const v = await runYtdlp(['--version'], 10000);
-    console.log('[yt-dlp] Version:', v.trim(), '✓');
+    console.log('[yt-dlp] Version:', v.trim());
   } catch (e) {
-    console.error('[yt-dlp] WARNING: yt-dlp not working at startup:', e.message);
+    console.error('[yt-dlp] WARNING: yt-dlp not available at startup');
   }
 })();
 
 // ─── FETCH METADATA ─────────────────────────────────────────────
-// Command: yt-dlp --cookies cookies.txt -J --no-playlist "<URL>"
+// Command: yt-dlp --user-agent "Mozilla/5.0" --extractor-retries 3 -J --no-playlist "<URL>"
 exports.fetchMetadata = async (url) => {
   console.log('[fetchMetadata] URL:', url);
 
-  if (!isValidUrl(url)) throw new Error('Invalid URL format');
-  if (!fs.existsSync(cookiesPath)) throw new Error('cookies.txt not found on server');
+  if (!isValidUrl(url)) {
+    throw { message: 'Invalid URL format', stderr: null };
+  }
 
-  const args = ['--cookies', cookiesPath, '-J', '--no-playlist', url];
+  const args = [
+    '--user-agent', 'Mozilla/5.0',
+    '--extractor-retries', '3',
+    '-J',
+    '--no-playlist',
+    url
+  ];
+
   const output = await runYtdlp(args);
   const data = JSON.parse(output);
 
@@ -123,11 +107,14 @@ exports.fetchMetadata = async (url) => {
 };
 
 // ─── DOWNLOAD FILE ──────────────────────────────────────────────
+// Video: yt-dlp --user-agent "Mozilla/5.0" --extractor-retries 3 -f best "<URL>"
+// Audio: yt-dlp --user-agent "Mozilla/5.0" --extractor-retries 3 -x --audio-format mp3 "<URL>"
 exports.downloadFile = async (url, formatId, type) => {
   console.log('[downloadFile] URL:', url, 'Format:', formatId, 'Type:', type);
 
-  if (!isValidUrl(url)) throw new Error('Invalid URL format');
-  if (!fs.existsSync(cookiesPath)) throw new Error('cookies.txt not found on server');
+  if (!isValidUrl(url)) {
+    throw { message: 'Invalid URL format', stderr: null };
+  }
 
   const id = uuidv4();
   const ext = type === 'audio' ? 'mp3' : 'mp4';
@@ -135,21 +122,24 @@ exports.downloadFile = async (url, formatId, type) => {
   const filePath = path.join(process.cwd(), 'downloads', filename);
 
   let args;
+
   if (type === 'audio') {
     args = [
-      '--cookies', cookiesPath,
+      '--user-agent', 'Mozilla/5.0',
+      '--extractor-retries', '3',
       '-x', '--audio-format', 'mp3',
-      '--ffmpeg-location', FFMPEG_BIN,
+      '--ffmpeg-location', FFMPEG,
       '--no-playlist',
       '-o', filePath,
       url
     ];
   } else {
     args = [
-      '--cookies', cookiesPath,
-      '-f', formatId || 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+      '--user-agent', 'Mozilla/5.0',
+      '--extractor-retries', '3',
+      '-f', 'best',
       '--merge-output-format', 'mp4',
-      '--ffmpeg-location', FFMPEG_BIN,
+      '--ffmpeg-location', FFMPEG,
       '--no-playlist',
       '-o', filePath,
       url
@@ -157,9 +147,11 @@ exports.downloadFile = async (url, formatId, type) => {
   }
 
   console.log('[downloadFile] Starting...');
-  await runYtdlp(args, 300000);
+  await runYtdlp(args, 300000); // 5 min timeout for downloads
   console.log('[downloadFile] Done:', filePath);
 
-  if (fs.existsSync(filePath)) return filePath;
-  throw new Error('Downloaded file not found');
+  if (fs.existsSync(filePath)) {
+    return filePath;
+  }
+  throw { message: 'Downloaded file not found', stderr: null };
 };

@@ -5,12 +5,10 @@ const path = require('path');
 function readableError(err) {
   const msg = (err.message || err.stderr || '').toLowerCase();
 
-  if (msg.includes('cookies.txt not found')) return 'cookies.txt not found on server';
   if (msg.includes('invalid url')) return 'Invalid URL. Please enter a valid video link.';
-  if (msg.includes('sign in') || msg.includes('not a bot')) return 'Authentication required. Server cookies need refresh.';
+  if (msg.includes('sign in') || msg.includes('bot') || msg.includes('captcha') || msg.includes('age')) return 'This video is temporarily unavailable. Try another video.';
   if (msg.includes('private')) return 'This video is private.';
   if (msg.includes('unavailable') || msg.includes('removed')) return 'This video is unavailable or removed.';
-  if (msg.includes('age')) return 'Age-restricted video. Server cookies need refresh.';
   if (msg.includes('rate') || msg.includes('429') || msg.includes('too many')) return 'Rate limited. Please try again later.';
   if (msg.includes('unsupported') || msg.includes('no video')) return 'This URL is not supported.';
   if (msg.includes('timed out') || msg.includes('timeout')) return 'Request timed out. Try again.';
