@@ -23,23 +23,13 @@ exports.downloadMedia = async (req, res) => {
     // Download file
     const filePath = await ytdlpService.downloadFile(url, formatId, type);
     
-    // Stream file to client
-    const stat = fs.statSync(filePath);
-    res.writeHead(200, {
-      'Content-Length': stat.size,
-      'Content-Type': type === 'audio' ? 'audio/mpeg' : 'video/mp4',
-      'Content-Disposition': `attachment; filename="${path.basename(filePath)}"`,
-    });
+    // Return direct URL
+    const filename = path.basename(filePath);
+    const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+    const host = req.get('host');
+    const downloadUrl = `${protocol}://${host}/downloads/${filename}`;
 
-    const readStream = fs.createReadStream(filePath);
-    readStream.pipe(res);
-    
-    // Cleanup after sending
-    readStream.on('end', () => {
-      fs.unlink(filePath, (err) => {
-        if (err) console.error('Failed to cleanup file:', err);
-      });
-    });
+    res.json({ success: true, data: { download_url: downloadUrl, filename } });
 
   } catch (error) {
     console.error('Download error:', error);
@@ -56,22 +46,13 @@ exports.convertMedia = async (req, res) => {
         if (!url) return res.status(400).json({ error: 'URL is required' });
     
         const filePath = await ytdlpService.downloadFile(url, 'bestaudio', 'audio');
-        
-        const stat = fs.statSync(filePath);
-        res.writeHead(200, {
-          'Content-Length': stat.size,
-          'Content-Type': 'audio/mpeg',
-          'Content-Disposition': `attachment; filename="${path.basename(filePath)}"`,
-        });
-    
-        const readStream = fs.createReadStream(filePath);
-        readStream.pipe(res);
-        
-        readStream.on('end', () => {
-          fs.unlink(filePath, (err) => {
-            if (err) console.error('Failed to cleanup file:', err);
-          });
-        });
+        // Return direct URL
+        const filename = path.basename(filePath);
+        const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+        const host = req.get('host');
+        const downloadUrl = `${protocol}://${host}/downloads/${filename}`;
+
+        res.json({ success: true, data: { download_url: downloadUrl, filename } });
       } catch (error) {
         console.error('Conversion error:', error);
         if (!res.headersSent) {

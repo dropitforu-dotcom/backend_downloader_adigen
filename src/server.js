@@ -25,6 +25,9 @@ app.use(corsMiddleware({
 
 app.use(express.json());
 
+// Serve static files
+app.use('/downloads', express.static(path.join(process.cwd(), 'downloads')));
+
 // Routes
 const downloadRoutes = require('./routes/downloadRoutes');
 app.use('/api', downloadRoutes);
@@ -35,6 +38,13 @@ app.get('/', (req, res) => {
     message: "Adigen API Running"
   });
 });
+
+app.get('/api/test', (req, res) => {
+  res.json({
+    success: true
+  });
+});
+
 
 // Create required directories if they don't exist
 const dirs = ['downloads', 'temp', 'logs'];
@@ -49,3 +59,27 @@ const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`Server running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`);
 });
+
+// Auto cleanup job every 30 minutes
+setInterval(() => {
+  const dirsToClean = ['downloads', 'temp'];
+  dirsToClean.forEach(dir => {
+    const dirPath = path.join(process.cwd(), dir);
+    if (fs.existsSync(dirPath)) {
+      fs.readdir(dirPath, (err, files) => {
+        if (err) return;
+        const now = Date.now();
+        files.forEach(file => {
+          const filePath = path.join(dirPath, file);
+          fs.stat(filePath, (err, stats) => {
+            if (err) return;
+            // Delete files older than 1 hour
+            if (now - stats.mtimeMs > 3600000) {
+              fs.unlink(filePath, () => {});
+            }
+          });
+        });
+      });
+    }
+  });
+}, 1800000);
