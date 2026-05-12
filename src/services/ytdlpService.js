@@ -1,4 +1,4 @@
-const { execFile } = require('child_process');
+const { spawn } = require('child_process');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const fs = require('fs');
@@ -34,23 +34,38 @@ function isValidUrl(url) {
   }
 }
 
-// ─── Run yt-dlp safely via execFile (NO shell, NO injection) ────
+// ─── Run yt-dlp safely via spawn (NO shell, NO injection) ────
 function runYtdlp(args, timeout = 120000) {
   return new Promise((resolve, reject) => {
     console.log('[yt-dlp] CMD:', YTDLP_BIN, args.join(' '));
 
-    execFile(YTDLP_BIN, args, {
-      maxBuffer: 50 * 1024 * 1024,
-      timeout: timeout,
-      cwd: process.cwd()
-    }, (error, stdout, stderr) => {
-      console.log('[yt-dlp] stdout len:', stdout ? stdout.length : 0);
-      console.log('[yt-dlp] stderr:', stderr ? stderr.substring(0, 500) : 'none');
-      if (error) {
-        console.error('[yt-dlp] Error:', error.message);
-        return reject({ message: error.message, stderr, stdout });
+    const child = spawn(YTDLP_BIN, args, {
+      cwd: process.cwd(),
+      timeout: timeout
+    });
+
+    let stdoutData = '';
+    let stderrData = '';
+
+    child.stdout.on('data', (data) => {
+      stdoutData += data.toString();
+    });
+
+    child.stderr.on('data', (data) => {
+      stderrData += data.toString();
+    });
+
+    child.on('error', (error) => {
+      console.error('[yt-dlp] spawn error:', error.message);
+      reject({ message: error.message, stderr: stderrData, stdout: stdoutData });
+    });
+
+    child.on('close', (code) => {
+      console.log('[yt-dlp] exit code:', code, 'stdout:', stdoutData.length, 'stderr:', stderrData.length);
+      if (code !== 0) {
+        return reject({ message: stderrData || 'Process exited with code ' + code, stderr: stderrData, stdout: stdoutData });
       }
-      resolve(stdout);
+      resolve(stdoutData);
     });
   });
 }
@@ -83,7 +98,18 @@ exports.fetchMetadata = async (url) => {
   ];
 
   const output = await runYtdlp(args);
-  const data = JSON.parse(output);
+  
+  if (!output || output.trim() === '') {
+    throw { message: 'Unable to fetch video details.', stderr: null };
+  }
+
+  let data;
+  try {
+    data = JSON.parse(output);
+  } catch (err) {
+    console.error('[yt-dlp] JSON parse error:', err.message);
+    throw { message: 'This video is temporarily unavailable. Try another video.', stderr: null };
+  }
 
   console.log('[fetchMetadata] Success:', data.title);
 

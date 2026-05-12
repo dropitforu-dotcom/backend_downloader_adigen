@@ -14,7 +14,7 @@ function readableError(err) {
   if (msg.includes('timed out') || msg.includes('timeout')) return 'Request timed out. Try again.';
   if (msg.includes('enoent') || msg.includes('spawn')) return 'Download engine not available on server.';
 
-  return 'Unable to process this video. Please try again.';
+  return 'This video is temporarily unavailable. Try another video.';
 }
 
 // ─── POST /api/info ─────────────────────────────────────────────
@@ -31,7 +31,7 @@ exports.getMetadata = async (req, res) => {
     res.json({ success: true, ...data });
   } catch (error) {
     console.error('[API /info] Error:', error.message);
-    res.status(500).json({ success: false, message: readableError(error) });
+    res.json({ success: false, message: readableError(error) });
   }
 };
 
@@ -54,7 +54,7 @@ exports.downloadMedia = async (req, res) => {
     res.json({ success: true, data: { download_url: downloadUrl, filename } });
   } catch (error) {
     console.error('[API /download] Error:', error.message);
-    res.status(500).json({ success: false, message: readableError(error) });
+    res.json({ success: false, message: readableError(error) });
   }
 };
 
@@ -77,6 +77,6 @@ exports.convertMedia = async (req, res) => {
     res.json({ success: true, data: { download_url: downloadUrl, filename } });
   } catch (error) {
     console.error('[API /audio] Error:', error.message);
-    res.status(500).json({ success: false, message: readableError(error) });
+    res.json({ success: false, message: readableError(error) });
   }
 };
