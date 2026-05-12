@@ -3,14 +3,15 @@ set -o errexit
 
 echo "=== Adigen Backend Build ==="
 
-# 1. npm dependencies
-echo "[1/3] Installing npm dependencies..."
+# 1. npm
+echo "[1/3] npm install..."
 npm install
 
-# 2. yt-dlp via pip (python3 is available on Render by default)
-echo "[2/3] Installing yt-dlp..."
-python3 -m pip install -U yt-dlp
-echo "yt-dlp version: $(python3 -m yt_dlp --version)"
+# 2. yt-dlp standalone binary
+echo "[2/3] Downloading yt-dlp..."
+curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o ./yt-dlp
+chmod a+rx ./yt-dlp
+echo "yt-dlp version: $(./yt-dlp --version)"
 
 # 3. ffmpeg static binary
 echo "[3/3] Downloading ffmpeg..."
@@ -23,8 +24,6 @@ if [ -n "$FFMPEG_DIR" ]; then
   rm -rf "$FFMPEG_DIR" ffmpeg.tar.xz
   chmod a+rx ./ffmpeg ./ffprobe
   echo "ffmpeg: $(./ffmpeg -version | head -n 1)"
-else
-  echo "WARNING: ffmpeg download failed"
 fi
 
 echo "=== Build Complete ==="
