@@ -1,25 +1,27 @@
 const ytdlpService = require('../services/ytdlpService');
 const path = require('path');
-const fs = require('fs');
 
-// ─── Clean error message for frontend (never expose internals) ─────
+// ─── Map raw yt-dlp errors to clean frontend messages ─────────────
 function cleanError(rawMessage) {
   const msg = (rawMessage || '').toLowerCase();
 
-  if (msg.includes('sign in') || msg.includes('not a bot') || msg.includes('cookies')) {
-    return 'YouTube requires authentication. Please update cookies.txt on the server.';
+  if (msg.includes('cookies_missing')) {
+    return 'cookies.txt missing on server. Please contact admin.';
   }
-  if (msg.includes('not found') || msg.includes('unavailable') || msg.includes('removed')) {
-    return 'This video is unavailable or has been removed.';
+  if (msg.includes('sign in') || msg.includes('not a bot') || msg.includes('confirm your')) {
+    return 'Please refresh server authentication.';
   }
   if (msg.includes('private')) {
     return 'This video is private and cannot be downloaded.';
   }
+  if (msg.includes('unavailable') || msg.includes('removed') || msg.includes('not exist')) {
+    return 'This video is unavailable or has been removed.';
+  }
   if (msg.includes('geo') || msg.includes('country')) {
     return 'This video is not available in the server region.';
   }
-  if (msg.includes('age') || msg.includes('login')) {
-    return 'This video requires age verification. Please update cookies.txt on the server.';
+  if (msg.includes('age') || msg.includes('login required')) {
+    return 'Please refresh server authentication.';
   }
   if (msg.includes('unsupported') || msg.includes('no video')) {
     return 'This URL is not supported or contains no downloadable media.';
@@ -31,10 +33,11 @@ function cleanError(rawMessage) {
     return 'Download engine is not available. Please contact support.';
   }
 
+  // Return generic message — never expose raw stderr
   return 'Unable to process this video. Please try a different URL.';
 }
 
-// ─── POST /api/info ────────────────────────────────────────────────
+// ─── POST /api/info ───────────────────────────────────────────────
 exports.getMetadata = async (req, res) => {
   try {
     const { url } = req.body;
@@ -45,7 +48,12 @@ exports.getMetadata = async (req, res) => {
     }
 
     const metadata = await ytdlpService.fetchMetadata(url);
-    res.json({ success: true, data: metadata });
+
+    // Match the exact response format requested
+    res.json({
+      success: true,
+      data: metadata
+    });
   } catch (error) {
     console.error(`[API /info] Error:`, error.message);
     if (!res.headersSent) {
@@ -54,7 +62,7 @@ exports.getMetadata = async (req, res) => {
   }
 };
 
-// ─── POST /api/download ───────────────────────────────────────────
+// ─── POST /api/download ──────────────────────────────────────────
 exports.downloadMedia = async (req, res) => {
   try {
     const { url, formatId, type } = req.body;
@@ -80,7 +88,7 @@ exports.downloadMedia = async (req, res) => {
   }
 };
 
-// ─── POST /api/audio ──────────────────────────────────────────────
+// ─── POST /api/audio ─────────────────────────────────────────────
 exports.convertMedia = async (req, res) => {
   try {
     const { url } = req.body;
