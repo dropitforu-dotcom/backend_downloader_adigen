@@ -1,95 +1,127 @@
-const { execFile } = require('child_process');
+const { execFile, execSync } = require('child_process');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const fs = require('fs');
 
-// ─── PROJECT ROOT (where package.json lives) ──────────────────────
-const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
-
-// ─── Cookies Path Resolution ──────────────────────────────────────
-const COOKIES_PATH = path.join(PROJECT_ROOT, 'cookies.txt');
+// ─── Cookies Path (relative to this file: src/services/ → ../../cookies.txt) ──
+const COOKIES_PATH = path.resolve(__dirname, '..', '..', 'cookies.txt');
 console.log('[yt-dlp] Cookies Path:', COOKIES_PATH);
 console.log('[yt-dlp] Cookies Exists:', fs.existsSync(COOKIES_PATH));
 
-// ─── ffmpeg Path Resolution ───────────────────────────────────────
+// ─── ffmpeg Resolution ────────────────────────────────────────────
 function getFfmpegPath() {
-  // Check project root first (downloaded by render-build.sh)
-  const localBin = path.join(PROJECT_ROOT, 'ffmpeg');
+  const localBin = path.resolve(__dirname, '..', '..', 'ffmpeg');
   if (fs.existsSync(localBin)) return localBin;
-  // Try npm ffmpeg-static
   try {
-    const ffmpegStatic = require('ffmpeg-static');
-    if (ffmpegStatic) return ffmpegStatic;
-  } catch (e) { /* ignore */ }
+    const s = require('ffmpeg-static');
+    if (s) return s;
+  } catch (e) {}
   return 'ffmpeg';
 }
-
 const FFMPEG = getFfmpegPath();
 console.log('[yt-dlp] ffmpeg Path:', FFMPEG);
 
-// ─── Run yt-dlp via python3 -m yt_dlp ────────────────────────────
-function runYtdlp(args) {
+// ─── Python3 + yt-dlp startup check ──────────────────────────────
+try {
+  const pyVer = execSync('python3 --version', { encoding: 'utf-8' }).trim();
+  console.log(`[yt-dlp] ${pyVer}`);
+} catch (e) {
+  console.error('[yt-dlp] CRITICAL: python3 is NOT available on this system!');
+}
+
+try {
+  const ytVer = execSync('python3 -m yt_dlp --version', { encoding: 'utf-8' }).trim();
+  console.log(`[yt-dlp] yt-dlp version: ${ytVer}`);
+  console.log('[yt-dlp] yt-dlp working ✓');
+} catch (e) {
+  console.error('[yt-dlp] CRITICAL: python3 -m yt_dlp is NOT available!', e.message);
+}
+
+// ─── URL sanitization ────────────────────────────────────────────
+function sanitizeUrl(url) {
+  // Normalize youtu.be short links
+  const shortMatch = url.match(/youtu\.be\/([a-zA-Z0-9_-]+)/);
+  if (shortMatch) {
+    return `https://www.youtube.com/watch?v=${shortMatch[1]}`;
+  }
+  // Normalize YouTube Shorts
+  const shortsMatch = url.match(/youtube\.com\/shorts\/([a-zA-Z0-9_-]+)/);
+  if (shortsMatch) {
+    return `https://www.youtube.com/watch?v=${shortsMatch[1]}`;
+  }
+  return url;
+}
+
+// ─── Run yt-dlp via python3 -m yt_dlp (execFile, NOT exec) ──────
+function runYtdlp(userUrl, extraArgs = []) {
   return new Promise((resolve, reject) => {
-    // Always use python3 -m yt_dlp for Render Linux compatibility
-    const fullArgs = ['-m', 'yt_dlp', ...args];
+    const url = sanitizeUrl(userUrl);
 
-    // Safe log (mask cookies path content)
-    const safeLog = fullArgs.map(a =>
-      a === COOKIES_PATH ? '[cookies.txt]' : a
-    ).join(' ');
-    console.log(`[yt-dlp] CMD: python3 ${safeLog}`);
+    const args = ['-m', 'yt_dlp', '--no-warnings'];
 
-    execFile('python3', fullArgs, {
+    // Add cookies if file exists
+    if (fs.existsSync(COOKIES_PATH)) {
+      args.push('--cookies', COOKIES_PATH);
+    }
+
+    // Add ffmpeg location
+    args.push('--ffmpeg-location', FFMPEG);
+
+    // Add extra args (like --dump-json, -f, etc.)
+    args.push(...extraArgs);
+
+    // Add URL last
+    args.push(url);
+
+    // Log safely (never log cookie content)
+    const safeArgs = args.map(a => a === COOKIES_PATH ? '[cookies.txt]' : a);
+    console.log(`[yt-dlp] CMD: python3 ${safeArgs.join(' ')}`);
+
+    execFile('python3', args, {
       maxBuffer: 50 * 1024 * 1024,
       timeout: 180000,
-      cwd: PROJECT_ROOT
+      cwd: path.resolve(__dirname, '..', '..')
     }, (error, stdout, stderr) => {
       if (error) {
-        console.error(`[yt-dlp] STDERR: ${stderr}`);
-        console.error(`[yt-dlp] EXIT CODE: ${error.code}`);
-        return reject(new Error(stderr || error.message));
+        console.error('[yt-dlp] STDERR:', stderr);
+        console.error('[yt-dlp] EXIT CODE:', error.code);
+        const err = new Error(stderr || error.message);
+        err.stderr = stderr;
+        err.stdout = stdout;
+        return reject(err);
       }
       resolve(stdout);
     });
   });
 }
 
-// ─── Base args: cookies + ffmpeg (NO deprecated flags) ────────────
-function baseArgs() {
-  const args = ['--no-warnings', '--ffmpeg-location', FFMPEG];
-  if (fs.existsSync(COOKIES_PATH)) {
-    args.push('--cookies', COOKIES_PATH);
-  }
-  return args;
-}
-
-// ─── Startup health check ─────────────────────────────────────────
-(async () => {
+// ─── Health check export ─────────────────────────────────────────
+exports.healthCheck = () => {
+  let ytDlpOk = false;
   try {
-    const version = await runYtdlp(['--version']);
-    console.log(`[yt-dlp] Version: ${version.trim()}`);
-  } catch (err) {
-    console.error(`[yt-dlp] CRITICAL: python3 -m yt_dlp not available!`, err.message);
-  }
-})();
+    execSync('python3 -m yt_dlp --version', { encoding: 'utf-8', timeout: 10000 });
+    ytDlpOk = true;
+  } catch (e) {}
 
-// ─── Fetch Metadata ───────────────────────────────────────────────
+  return {
+    ytDlp: ytDlpOk,
+    cookies: fs.existsSync(COOKIES_PATH),
+    cookiesPath: COOKIES_PATH,
+    ffmpeg: FFMPEG
+  };
+};
+
+// ─── Fetch Metadata ──────────────────────────────────────────────
 exports.fetchMetadata = async (url) => {
   console.log(`[fetchMetadata] URL: ${url}`);
 
-  // Verify cookies exist
   if (!fs.existsSync(COOKIES_PATH)) {
-    throw new Error('COOKIES_MISSING');
+    const err = new Error('COOKIES_MISSING');
+    err.stderr = `cookies.txt not found at: ${COOKIES_PATH}`;
+    throw err;
   }
 
-  const args = [
-    ...baseArgs(),
-    '--dump-json',
-    '--no-playlist',
-    url
-  ];
-
-  const output = await runYtdlp(args);
+  const output = await runYtdlp(url, ['--dump-json', '--no-playlist']);
   const metadata = JSON.parse(output);
 
   console.log(`[fetchMetadata] Success: "${metadata.title}"`);
@@ -111,40 +143,39 @@ exports.fetchMetadata = async (url) => {
   };
 };
 
-// ─── Download File ────────────────────────────────────────────────
+// ─── Download File ───────────────────────────────────────────────
 exports.downloadFile = async (url, formatId, type) => {
   console.log(`[downloadFile] URL: ${url}, Format: ${formatId}, Type: ${type}`);
 
   if (!fs.existsSync(COOKIES_PATH)) {
-    throw new Error('COOKIES_MISSING');
+    const err = new Error('COOKIES_MISSING');
+    err.stderr = `cookies.txt not found at: ${COOKIES_PATH}`;
+    throw err;
   }
 
   const id = uuidv4();
   const ext = type === 'audio' ? 'mp3' : 'mp4';
   const filename = `${type}_${id}.${ext}`;
-  const filePath = path.join(PROJECT_ROOT, 'downloads', filename);
+  const filePath = path.resolve(__dirname, '..', '..', 'downloads', filename);
 
-  const args = [
-    ...baseArgs(),
+  const extraArgs = [
     '-f', formatId || (type === 'audio' ? 'bestaudio' : 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best'),
     '-o', filePath,
-    '--no-playlist',
-    url
+    '--no-playlist'
   ];
 
   if (type === 'audio') {
-    args.push('--extract-audio', '--audio-format', 'mp3');
+    extraArgs.push('--extract-audio', '--audio-format', 'mp3');
   } else {
-    args.push('--merge-output-format', 'mp4');
+    extraArgs.push('--merge-output-format', 'mp4');
   }
 
   console.log(`[downloadFile] Starting...`);
-  await runYtdlp(args);
+  await runYtdlp(url, extraArgs);
   console.log(`[downloadFile] Completed: ${filePath}`);
 
   if (fs.existsSync(filePath)) {
     return filePath;
-  } else {
-    throw new Error('Downloaded file not found after yt-dlp execution');
   }
+  throw new Error('Downloaded file not found after yt-dlp execution');
 };

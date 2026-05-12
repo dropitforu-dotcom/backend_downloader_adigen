@@ -1,5 +1,5 @@
 const express = require('express');
-
+const { execSync } = require('child_process');
 const dotenv = require('dotenv');
 const path = require('path');
 const fs = require('fs');
@@ -7,10 +7,24 @@ const fs = require('fs');
 // Load environment variables based on NODE_ENV
 const envFile = process.env.NODE_ENV === 'production' ? '.env.production' : '.env.development';
 dotenv.config({ path: path.resolve(process.cwd(), envFile) });
-// Fallback to .env
-dotenv.config();
+dotenv.config(); // Fallback to .env
 
-const app = require('express')();
+// ─── Python3 check on startup ────────────────────────────────────
+try {
+  const pyVer = execSync('python3 --version', { encoding: 'utf-8' }).trim();
+  console.log(`[startup] ${pyVer} ✓`);
+} catch (e) {
+  console.error('[startup] CRITICAL: Python3 is missing on this system!');
+}
+
+try {
+  const ytVer = execSync('python3 -m yt_dlp --version', { encoding: 'utf-8' }).trim();
+  console.log(`[startup] yt-dlp ${ytVer} ✓`);
+} catch (e) {
+  console.error('[startup] CRITICAL: yt-dlp not available via python3 -m yt_dlp');
+}
+
+const app = express();
 const corsMiddleware = require('cors');
 
 app.use(corsMiddleware({
@@ -25,28 +39,37 @@ app.use(corsMiddleware({
 
 app.use(express.json());
 
-// Serve static files
+// Serve downloaded files
 app.use('/downloads', express.static(path.join(process.cwd(), 'downloads')));
 
-// Routes
+// ─── Routes ──────────────────────────────────────────────────────
 const downloadRoutes = require('./routes/downloadRoutes');
 app.use('/api', downloadRoutes);
 
+// Root route
 app.get('/', (req, res) => {
+  res.json({ success: true, message: 'Adigen API Running' });
+});
+
+// Test route
+app.get('/api/test', (req, res) => {
+  res.json({ success: true });
+});
+
+// ─── Health check with yt-dlp and cookies status ─────────────────
+app.get('/health', (req, res) => {
+  const ytdlpService = require('./services/ytdlpService');
+  const health = ytdlpService.healthCheck();
   res.json({
     success: true,
-    message: "Adigen API Running"
+    ytDlp: health.ytDlp,
+    cookies: health.cookies,
+    cookiesPath: health.cookiesPath,
+    ffmpeg: health.ffmpeg
   });
 });
 
-app.get('/api/test', (req, res) => {
-  res.json({
-    success: true
-  });
-});
-
-
-// Create required directories if they don't exist
+// ─── Create required directories ────────────────────────────────
 const dirs = ['downloads', 'temp', 'logs'];
 dirs.forEach(dir => {
   const dirPath = path.join(process.cwd(), dir);
@@ -55,15 +78,16 @@ dirs.forEach(dir => {
   }
 });
 
+// ─── Start server ───────────────────────────────────────────────
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
-  console.log(`Server running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`);
+  console.log(`[startup] Server running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`);
+  console.log(`[startup] CORS allowed: http://localhost:5173, https://adigen.media`);
 });
 
-// Auto cleanup job every 30 minutes
+// ─── Auto cleanup every 30 minutes ──────────────────────────────
 setInterval(() => {
-  const dirsToClean = ['downloads', 'temp'];
-  dirsToClean.forEach(dir => {
+  ['downloads', 'temp'].forEach(dir => {
     const dirPath = path.join(process.cwd(), dir);
     if (fs.existsSync(dirPath)) {
       fs.readdir(dirPath, (err, files) => {
@@ -73,7 +97,6 @@ setInterval(() => {
           const filePath = path.join(dirPath, file);
           fs.stat(filePath, (err, stats) => {
             if (err) return;
-            // Delete files older than 1 hour
             if (now - stats.mtimeMs > 3600000) {
               fs.unlink(filePath, () => {});
             }
